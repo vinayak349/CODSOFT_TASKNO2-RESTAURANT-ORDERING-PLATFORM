@@ -1,0 +1,228 @@
+// Prisma Schema for DineDesk Restaurant Ordering & Table Management Platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  KITCHEN
+  ADMIN
+}
+
+enum FulfillmentType {
+  DINE_IN
+  PICKUP
+  DELIVERY
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PLACED
+  CONFIRMED
+  PREPARING
+  READY
+  COMPLETED
+  CANCELLED
+  PAYMENT_FAILED
+  REJECTED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum PaymentProvider {
+  TEST_ONLINE
+  CASH
+  RAZORPAY
+  STRIPE
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+model User {
+  id           String        @id @default(uuid())
+  name         String
+  email        String        @unique
+  passwordHash String
+  role         Role          @default(CUSTOMER)
+  phone        String?
+  orders       Order[]
+  reservations Reservation[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([email])
+  @@index([role])
+}
+
+model Category {
+  id          String     @id @default(uuid())
+  name        String
+  slug        String     @unique
+  description String?
+  sortOrder   Int        @default(0)
+  items       MenuItem[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([slug])
+}
+
+model MenuItem {
+  id              String      @id @default(uuid())
+  name            String
+  slug            String      @unique
+  description     String
+  price           Decimal     @db.Decimal(10, 2)
+  imageUrl        String
+  isAvailable     Boolean     @default(true)
+  preparationTime Int?        @default(15) // in minutes
+  dietaryLabels   String?     // JSON array or comma separated: Veg, Non-Veg, Chef Special, Vegan, Gluten-Free
+  category        Category    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  categoryId      String
+  orderItems      OrderItem[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([categoryId])
+  @@index([slug])
+  @@index([isAvailable])
+}
+
+model RestaurantTable {
+  id           String        @id @default(uuid())
+  tableNumber  String        @unique
+  capacity     Int
+  isActive     Boolean       @default(true)
+  section      String?       // "Main Dining", "Garden Patio", "Balcony", "VIP Lounge"
+  reservations Reservation[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([tableNumber])
+  @@index([isActive])
+}
+
+model Reservation {
+  id              String            @id @default(uuid())
+  customer        User?             @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId      String?
+  guestName       String
+  guestPhone      String
+  guestEmail      String?
+  reservationDate DateTime          // Date of reservation
+  startTime       String            // "18:30"
+  endTime         String            // "20:00"
+  partySize       Int
+  table           RestaurantTable?  @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  tableId         String?
+  status          ReservationStatus @default(PENDING)
+  specialRequests String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([reservationDate, startTime])
+  @@index([tableId])
+  @@index([customerId])
+  @@index([status])
+}
+
+model Order {
+  id              String          @id @default(uuid())
+  orderNumber     String          @unique // e.g. DD-20261014-9421
+  customer        User?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId      String?
+  customerName    String
+  customerPhone   String
+  customerEmail   String?
+  fulfillmentType FulfillmentType @default(DINE_IN)
+  deliveryAddress String?
+  tableNumber     String?         // For Dine-in
+  notes           String?
+  status          OrderStatus     @default(PLACED)
+  paymentStatus   PaymentStatus   @default(PENDING)
+  subtotal        Decimal         @db.Decimal(10, 2)
+  taxAmount       Decimal         @db.Decimal(10, 2)
+  deliveryFee     Decimal         @db.Decimal(10, 2) @default(0.00)
+  discountAmount  Decimal         @db.Decimal(10, 2) @default(0.00)
+  totalAmount     Decimal         @db.Decimal(10, 2)
+  idempotencyKey  String?         @unique
+  items           OrderItem[]
+  payments        Payment[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([orderNumber])
+  @@index([customerId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id                String    @id @default(uuid())
+  order             Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId           String
+  menuItem          MenuItem? @relation(fields: [menuItemId], references: [id], onDelete: SetNull)
+  menuItemId        String?
+  itemNameSnapshot  String
+  unitPriceSnapshot Decimal   @db.Decimal(10, 2)
+  quantity          Int
+  lineTotal         Decimal   @db.Decimal(10, 2)
+  createdAt         DateTime  @default(now())
+
+  @@index([orderId])
+}
+
+model Payment {
+  id                String          @id @default(uuid())
+  order             Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId           String
+  provider          PaymentProvider @default(CASH)
+  providerReference String?         @unique
+  amount            Decimal         @db.Decimal(10, 2)
+  currency          String          @default("INR")
+  status            PaymentStatus   @default(PENDING)
+  notes             String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([orderId])
+  @@index([providerReference])
+}
+
+model RestaurantSettings {
+  id                     String   @id @default("singleton")
+  restaurantName         String   @default("DineDesk Bistro & Bar")
+  tagline                String   @default("Artisanal Flavors, Effortless Hospitality")
+  address                String   @default("42 Gourmet Avenue, Indiranagar, Bengaluru, KA 560038")
+  phone                  String   @default("+91 98765 43210")
+  email                  String   @default("concierge@dinedesk.com")
+  currency               String   @default("INR")
+  currencySymbol         String   @default("₹")
+  timezone               String   @default("Asia/Kolkata")
+  openingTime            String   @default("11:00")
+  closingTime            String   @default("23:00")
+  reservationDurationMins Int      @default(90)
+  taxRatePercent         Decimal  @default(5.00) @db.Decimal(5, 2)
+  deliveryFeeAmount      Decimal  @default(40.00) @db.Decimal(10, 2)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
